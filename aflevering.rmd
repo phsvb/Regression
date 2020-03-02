@@ -1,0 +1,122 @@
+---
+title: "Assignment"
+author: "Philip, Frederik and Jonas"
+date: "06/10/2019"
+output: pdf_document
+fig.caption: yes
+header-includes: 
+  \usepackage{float}
+  \floatplacement{figure}{H}
+---
+```{r, echo = F, include = F}
+cancer <- read.table("data_practical.txt", header = TRUE, colClasses = c("factor", "factor", "factor", "factor", "numeric", "numeric", "numeric"))
+library(ggplot2)
+library(ggcorrplot)
+library(tidyverse)
+library(ggplot2)
+library(hexbin)
+library(gridExtra)
+library(xtable)
+library(splines)
+library(survival)
+library(grid)
+library(lpSolve)
+library(Matrix)
+library(lme4)
+library(ggcorrplot)
+library(plyr)
+library(locfit)
+library(kableExtra)
+library(knitr)
+```
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.align = "center", fig.pos = "!h")
+birds=read.table("data_practical.txt",header=TRUE, colClasses = c("factor","factor","factor","factor","numeric","numeric","numeric"))
+Table1=table(birds$LC,birds$BK)
+colnames(Table1)=c("Not a birdkeeper", "Birdkeeper")
+rownames(Table1)=c("Does not have lung cancer", "Has lung cancer")
+Table1
+addmargins(Table1)
+```
+\subsection{The data}
+The dataset for this paper is taken from \textit{The Statistical Sleuth}.\
+The data contains information on seven variables:\
+\textbf{LC:} Lung Cancer (1=yes, 0=no)\
+\textbf{FM:} Sex (1=Female, 0=Male)\
+\textbf{SS:} Socioeconomic Status (1=High, 0=Low)\
+\textbf{BK:} Birdkeeping (1=yes, 0=no)\
+\textbf{AG:} Age (in years)\
+\textbf{YR:} Years of smoking prior to diagnosis or ecamination (in years)\
+\textbf{CD:} Cigarettes per day\
+We will in this paper investigate the association between keeping birds and having lung cancer
+
+We begin by looking at the contingency tables between lung cancer and birdkeepers. Here we have the counts and sample proportions:
+```{r, echo=FALSE, fig.cap = "Hello"}
+list(addmargins(Table1), prop.table(Table1))
+```
+Looking at the sample counts we see a sample odds ratio of $\frac{64\cdot 33}{16\cdot 34}=3.88.$ Meaning that birdkeepers have 3.88 times the chance of lung cancer as non-birdkeepers. Conditioning on birdkeepers gives the following:
+```{r, echo=FALSE, fig.cap = "Hello"}
+list(prop.table(Table1,margin=2))
+```
+Where we see $P(LC=1|BK=1)$ is a staggering 0.49 compared to the 0.2 of non-birdkeepers. \
+Doing a $\chi^2$ test of the two factors gives us a $\chi^2$ value of 14.042, which compared to a $\chi^2_{(2-1)(2-1)}$ distributions gives a p-value of $17\cdot 10^{-5}$. Hence the factors BK and LC are independent. Furthermore by the conditional probabilities and odds ratio we see that keeping bird increases the chance of lung cancer. 
+\pagebreak
+\subsection{Thoughts about the data}
+By looking at the probaility table, we can see that people with birds have a higher tendency to have lung cancer.
+\
+If we make a correlation plot, we can see if a variable has an impact on having lung cancer or not.
+
+```{r, echo = F, fig.width=4, fig.height=4}
+cp <- cor(data.matrix(na.omit(cancer)), method = "spearman")
+ggcorrplot(cp, lab = T)
+```
+\
+As we can see in the correlation plot, birdkeeping have a impact on having lung cancer, we also see that years of smoking and number of cigerates pr day have an impact, this isn't suprising. What is suprising is that age doesn't seem to have an impact on having lung cancer or not.
+\
+We have chosen to try to explain lung cancer with 3 variables. Birdkeeping, years of smoking and number of cigerates pr day.
+\subsection{The model}
+As stated we want to make a model with 3 variables, we start by making the model with interaction. Our model will therefore be as follow:
+\begin{align*}
+Y_i \sim \gamma(BK_i \times YR \times CD) + \varepsilon_i
+\end{align*}
+\
+where $\varepsilon_i \sim \mathcal{N}(0,\sigma^2)$ are idd. 
+\
+\
+We want to test this model against the null-hypothesis where there is no interaction between the covariates.
+```{r, echo = F}
+model1 <- glm(LC ~ BK * YR * CD, family = binomial(link = "logit"), data = cancer)
+drop1(model1, test = "Chisq")
+```
+Which mean that we don't deny our null-hypothesis.
+\
+We use the drop1 function again, to see if we can make our model smaller, where we see that we don't need CD either.
+```{r, echo = F, include = F}
+model2 <- glm(LC ~ BK + YR + CD, family = binomial(link = "logit"), data = cancer)
+drop1(model2, test = "Chisq") 
+model3 <- glm(LC ~ BK + YR, family = binomial(link = "logit"), data = cancer)
+drop1(model3, test = "Chisq")
+```
+\pagebreak
+This means that we end with the model:
+\begin{align*}
+Y_i \sim \alpha(BK_i) + \beta \cdot YR_i + \varepsilon_i
+\end{align*}
+\
+where $\varepsilon_i \sim \mathcal{N}(0,\sigma^2)$ are idd. 
+\
+\subsection{Predicting the probaility of lung cancer}
+By using the predict function, we can now find the probability of having lung cancer for a birdkeeper/non-birdkeeper given how many years that person have smoken. We notice that we have observations for years of smoking in the range of 0 to 50 years, which means that it wouldn't make sense to try and predict for people who have smoken for 60 years, since we don't have any data that can explain what will happen. The following plot shows the probability of having lunc cancer:
+\
+```{r, echo =F, fig.width=3, fig.height=3}
+G0 <- expit(predict(model3, newdata = data.frame(BK = "0", YR = seq(0,50,1))))
+G1 <- expit(predict(model3, newdata = data.frame(BK = "1", YR = seq(0,50,1))))
+
+G02 <- t(rbind(G0, seq(0,50,1), rep(0,51)))
+G12 <- t(rbind(G1, seq(0,50,1), rep(1,51)))
+G <- as.data.frame(rbind(G02,G12))
+colnames(G) <- c("prob", "YR", "Birdkeeper")
+ggplot(data = G, aes(YR, prob)) + geom_line() + facet_wrap(~Birdkeeper)
+```
+\
+We clearly see that birdkeeping has an impact on the probability of having lung cancer. We notice that even if people haven't smoked the chance of having lung cancer is higher when having birds. If we compare the probability of having cancer if you have smoken in 50 years, that probability is almost twice as high when having birds.
