@@ -1,0 +1,170 @@
+---
+title: "Assignment 1"
+author: 
+  -Hreinn Gauti Bjarnason jrg242 
+  -Emil Ørum Thomsen 
+  -Emma Sofie Severin Pagaard
+  -Philip von Brockdorff 
+date: "2/27/2020"
+output: html_document
+---
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo =  TRUE)
+```
+## Titanic survival analysis 
+### Exploritory data analysis
+
+
+```{r eval=TRUE, echo=FALSE}
+library(tidyverse)
+library(ggplot2)
+library(ggcorrplot)
+Titanic <- read.table("titanic.txt", sep = ",", header = TRUE)%>%
+  mutate(sibsp = as.factor(ifelse(sibsp >0,1,0)), 
+         pclass = as.factor(pclass),
+         survived = as.factor(survived))
+Sum <- Titanic %>%
+  group_by(sex, survived, pclass)%>%
+  summarise(Mean = mean(age, na.rm = TRUE), 
+            Var = var(age, na.rm = TRUE),
+            count =n(), 
+            SumNA = sum(is.na(age)),
+            Precent = SumNA/count)
+
+
+```
+## Parameters to consider
+To consider what parameters to include we will look at contigency tables of survival $\times$ other factors, while conditioning on the other factor. 
+```{r, include=T, echo = F}
+
+addmargins(prop.table(table(titanic$survived,titanic$sex),margin=2),margin=1) # Noteworthy that P(Surv=0|Sex=M)=0.809 vs P(Surv=0|Sex=F)=0.2725
+addmargins(prop.table(table(titanic$survived,titanic$pclass),margin=2),margin=1) # 
+addmargins(prop.table(table(titanic$survived,titanic$sibsp ),margin=2),margin=1) # 
+addmargins(prop.table(table(titanic$survived,titanic$parch),margin=2),margin=1) # 
+```
+In the first table we see that the conditional probability of dying if you are a man (0.809) is much higher than it is for women $P(Surv=0|Sex=F)=0.273$, even higher than the conditional probability of surviving if you are a woman $P(Surv=1|Sex=F)=0.727$. 
+The sample odds ratio of men dying compared to women dying is $\frac{682\times339}{127\times161}=11.3$ meaning men were much more likely to die than women.
+In the second table we see that first class passengers had a higher conditional survival probability than dying. While the other classes had the reverse effect.
+In regards to sibsp and parch  we note that both $P(Surv=1|Sibsp=0)$ and $P(Surv=1|Parch=0)$ are approximately $\frac{1}{3}$, while $P(Surv=1|Sib=1),P(Surv=1|Parch=1)$ is roughly $\frac{1}{2}$, likewise for passengers with $Sibsp=2 ,Parch=2$. Perhabs, showing that couples without or with a single child were more likely to survive, as were the single child of acouple.  
+Higher values of $Parch$ and $Sibsp$ show larger conditional probablities for death (except $Parch=3$). Furthermore, we note that the counts for these are rather low, so we do not infer much more regarding these. 
+
+In conclussion, all factors have an influence on survival, hence we will chose to include all. 
+
+As we just noted, the bigger families are a miniority of the dataset. We have in this study chosen to change both $Parch$ and $Sibsp$ to binary factors where $0$ is as given (no siblings/spouses/children/parents), and $1$ indicates that the passenger had one or more. 
+#to some extent - this could be misleading as the small families were more likely to survive than the larger families. But by the arguement regarding low counts of large families we should be good
+These changes of course give rise to new contigency tables 
+```{r, include=T, echo = F}
+addmargins(prop.table(table(titanic$survived,titanic$sib1),margin=2),margin=1) # where sib1 is the new factor.
+addmargins(prop.table(table(titanic$survived,titanic$parch1),margin=2),margin=1) # 
+```
+Showing the effect of these factors on survival. 
+
+##Multiplicative effect
+We now consider the correlation plot. 
+## Correlation Plot
+Strongly correlated predictors result in the same problem as predictors with little variation. As we have both continuous and categorical variables we can't use a Pearson correlation, so instead we use the Spearman correlation,seen in the figure below. We argue that none of our covariateres have a strong enough correlation to be removed so we decide to keep the all. 
+#should perhabs use the changed factors on this corr plot
+
+
+```{r}
+cp <- cor(data.matrix(na.omit(titanic %>%
+                                dplyr::select(-c(survived)), method = "spearman")))
+ggcorrplot(cp,method = c("square"), colors = c("#00BFC4", "white","#F8766D"), lab = TRUE)
+```
+
+
+From this we would infer that we could consider multiplicative effect of $sex\times age$, $sex\times \parch$, $parch\times sibsp, pclass\times age$. Hence we consider the model with these multiplicative effects and do model reduction on this. 
+#... 
+
+
+# Missing data
+## Missing at random
+By looking at the summary of our dataset we can see that there is only one variable which has missing data, $\textit{age}$ . This is allso shown in the plot below.
+
+## MICE
+```{r, include=T, echo = F}
+library(mice)
+```
+
+
+```{r, include=T, echo = T}
+md.pattern(Titanic)
+```
+
+
+```{r, include=T, echo = T}
+Titanic %>%
+  group_by(sex)%>%
+  summarise(mean = mean(age, na.rm =T), 
+            Var = sd(age, na.rm = T)^2,
+            count = n())
+```
+A way to handle missing values could for example be imputing the mean of the variable. That is thoug no typically a good idea if the variance is to bigg. As seen the the table above the variance fot the age variable is realitivly high. Therefore do we decide to use a method called Multiple imputation by chained equations (MICE).
+As seen in the Figure below, we use the mice funciton from the package $\textbf{MICE}$ to generate 50 new complete datasets from the originale one. 
+```{r eval=T, include=F, echo=F}
+
+miceMod <-mice(Titanic, m = 50, maxit = 20, method = "pmm")
+```
+
+
+```{r eval=T, include=T, echo=T}
+densityplot(miceMod)
+```
+
+We fit a linear regression model on the variable age on each and every one of the 50 new data sets and then use a funciton called pool to find the estimate of all of them combined. The estimates for that model can be seen as following. 
+```{r eval=T, include=T, echo=T}
+# We fitt the a regression model to age
+fit <-  with(miceMod, exp = lm(age ~pclass + survived + sex + sibsp + parch))
+```
+
+
+```{r eval=T, include=T, echo=T}
+#find an estimate combined of all the models
+pooled <- pool(fit)
+
+#define our combined model
+pooled_lm <-  fit$analyses[[1]]
+pooled_lm$coefficients <-  summary(pooled)$estimate
+```
+
+Using that model we predict the missing values of our dataset. We note that the difference between the new and old data is minimal, seen bellow
+```{r eval=T, include=T, echo=T}
+# Make a data set of only the missing values in our dataset
+testdata <- Titanic%>%
+  filter(is.na(age))
+# predict for the missing value using our mice model
+newpred<- predict(pooled_lm, newdata = testdata)
+NewTitanic <- Titanic
+NewTitanic$age[is.na(NewTitanic$age) == TRUE] <- newpred
+summary(Titanic$age)
+summary(NewTitanic$age)
+```
+
+##Models
+Now that we have are happy with our data, we can begin by finding models to represent the true distribution of the data. We can never know the true distribution but we will hopefully be able to argue for a most plausible model.
+
+### AIC
+The Akaike’s Information Criterion is a way to compair models and see which one is best. The formula for the AIC is given by 
+$$\text{AIC} = -2\log(\hat{\theta}) + 2K$$
+Where we have the likelihood estimator and variables K. By using a function call $\textit{bestglm}$ from the package $\textbf{bestglm}$ we find the best 5 additive models based on ther AIC score. 
+```{r}
+library(bestglm)
+train <- NewTitanic
+lbw.for.bestglm <- within(train, {
+    y    <- survived         # bwt into y
+    survived  <- NULL        # Delete bwt
+})
+res.bestglm <-
+    bestglm(Xy = lbw.for.bestglm,
+            family = binomial(link ="logit"),
+            IC = "AIC",
+            method = "exhaustive")
+
+res.bestglm$BestModels
+```
+Here we can see that the best additive model acording to the AIC score is 
+$$Model1 : S = pclass + sex + age + parch$$
+
+
+
+
